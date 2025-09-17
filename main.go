@@ -52,4 +52,6 @@ func main() {
 
 	fmt.Println("✅ MongoDB Repository package is working correctly!")
 	fmt.Println("📚 Check the examples/ directory for comprehensive usage examples.")
+
+	fmt.Println("main run")
 }
