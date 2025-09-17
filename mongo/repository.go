@@ -384,9 +384,9 @@ func (r *MongoRepository[T]) Find(
 
 	// Opsiyonel IsDeleted koşulu
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["IsDeleted"] = *isDeleted[0]
+		filter["is_deleted"] = *isDeleted[0]
 	} else {
-		filter["IsDeleted"] = false
+		filter["is_deleted"] = false
 	}
 
 	findOptions := options.Find()
@@ -446,9 +446,9 @@ func (r *MongoRepository[T]) FindOne(
 ) (*T, error) {
 	// Eğer parametre verilmişse ve nil değilse filtreye uygula
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["IsDeleted"] = *isDeleted[0]
+		filter["is_deleted"] = *isDeleted[0]
 	} else {
-		filter["IsDeleted"] = false
+		filter["is_deleted"] = false
 	}
 
 	result := r.Collection.FindOne(ctx, filter)
@@ -515,15 +515,15 @@ func (r *MongoRepository[T]) DeleteOneSoft(ctx context.Context, filter bson.M, d
 		filter = bson.M{}
 	}
 	// Don't target already-deleted docs unless caller explicitly overrides
-	if _, ok := filter["IsDeleted"]; !ok {
-		filter["IsDeleted"] = bson.M{"$ne": true}
+	if _, ok := filter["is_deleted"]; !ok {
+		filter["is_deleted"] = bson.M{"$ne": true}
 	}
 
 	now := time.Now().UTC()
 	update := bson.M{"$set": bson.M{
-		"IsDeleted": true,
-		"DeletedAt": &now, // pointer field in your model
-		"DeletedBy": deletedBy,
+		"is_deleted": true,
+		"deleted_at": &now, // pointer field in your model
+		"deleted_by": deletedBy,
 	}}
 
 	res, err := r.Collection.UpdateOne(ctx, filter, update, options.Update().SetUpsert(false))
@@ -543,15 +543,15 @@ func (r *MongoRepository[T]) DeleteManySoft(ctx context.Context, filter bson.M, 
 	if filter == nil {
 		filter = bson.M{}
 	}
-	if _, ok := filter["IsDeleted"]; !ok {
-		filter["IsDeleted"] = bson.M{"$ne": true}
+	if _, ok := filter["is_deleted"]; !ok {
+		filter["is_deleted"] = bson.M{"$ne": true}
 	}
 
 	now := time.Now().UTC()
 	update := bson.M{"$set": bson.M{
-		"IsDeleted": true,
-		"DeletedAt": &now,
-		"DeletedBy": deletedBy,
+		"is_deleted": true,
+		"deleted_at": &now,
+		"deleted_by": deletedBy,
 	}}
 
 	res, err := r.Collection.UpdateMany(ctx, filter, update)
@@ -786,9 +786,9 @@ func (r *MongoRepository[T]) AggregateWithOptions(
 
 func (r *MongoRepository[T]) Count(ctx context.Context, filter bson.M, isDeleted ...*bool) (int64, error) {
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["IsDeleted"] = *isDeleted[0]
+		filter["is_deleted"] = *isDeleted[0]
 	} else {
-		filter["IsDeleted"] = false
+		filter["is_deleted"] = false
 	}
 	return r.Collection.CountDocuments(ctx, filter)
 }
@@ -808,11 +808,11 @@ func MakePagination(page, pageSize int64) *Pagination {
 // ortak helper (mutates)
 func ensureActiveFilter(filter bson.M, isDeleted ...*bool) {
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["IsDeleted"] = *isDeleted[0]
+		filter["is_deleted"] = *isDeleted[0]
 		return
 	}
-	if _, ok := filter["IsDeleted"]; !ok {
-		filter["IsDeleted"] = false
+	if _, ok := filter["is_deleted"]; !ok {
+		filter["is_deleted"] = false
 	}
 }
 
