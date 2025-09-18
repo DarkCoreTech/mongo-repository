@@ -408,17 +408,18 @@ func (r *MongoRepository[T]) Find(
 	}
 	defer cursor.Close(ctx)
 
+	// Performans için slice kapasitesini önceden ayarla
 	var results []T
-	for cursor.Next(ctx) {
-		var item T
-		if err := cursor.Decode(&item); err != nil {
-			return nil, err
-		}
-		results = append(results, item)
+	if pagination != nil && pagination.Limit > 0 {
+		// Limit varsa o kadar kapasite ayır
+		results = make([]T, 0, pagination.Limit)
+	} else {
+		// Limit yoksa varsayılan kapasite ayır
+		results = make([]T, 0, 100)
 	}
 
-	// 🔎 döngü sonrası cursor hatasını kontrol et
-	if err := cursor.Err(); err != nil {
+	// cursor.All() kullanarak tek seferde tüm sonuçları al (daha hızlı)
+	if err := cursor.All(ctx, &results); err != nil {
 		return nil, err
 	}
 
