@@ -1,9 +1,8 @@
-package mongo
+package mongokit
 
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -12,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// OpTypes OpType: Enum benzeri sorgu operatörleri
+// OpTypes defines MongoDB query operators
 var OpTypes = newOpTypes()
 
 func newOpTypes() *opTypes {
@@ -43,60 +42,45 @@ type opTypes struct {
 
 type OpType string
 
-// Reader Mock Data ve Unuit Test icin Interface Repository
+// Reader interface for read operations
 type Reader[T any] interface {
-	// Default: IsDeleted=false (aktif kayıtlar). İstersen &[]bool{true}[0] ile silinmişleri çek.
 	Find(ctx context.Context, filter bson.M, sort *SortOption, pagination *Pagination, isDeleted ...*bool) ([]T, error)
 	FindOne(ctx context.Context, filter bson.M, isDeleted ...*bool) (*T, error)
 	FindWithCount(ctx context.Context, filter bson.M, sort *SortOption, pagination *Pagination, isDeleted ...*bool) ([]T, int64, error)
-
-	// Paging/raporlama için şart
 	Count(ctx context.Context, filter bson.M, isDeleted ...*bool) (int64, error)
 }
 
+// Writer interface for write operations
 type Writer[T any] interface {
-	// Insert’ler
 	Insert(ctx context.Context, doc *T) (interface{}, error)
 	BulkInsert(ctx context.Context, docs []T) error
 	BulkInsertWithIDs(ctx context.Context, docs []T) ([]interface{}, error)
-
-	// Upsert (replace semantiği)
 	InsertOrUpdate(ctx context.Context, filter bson.M, doc *T) (matched, upserted int64, err error)
 	BulkInsertOrUpdate(ctx context.Context, docs []T, filterFn func(doc T) bson.M) (matched, upserted int64, err error)
-
-	// Upsert ($set semantiği – alan bazlı)
 	BulkInsertOrUpdateForFields(ctx context.Context, docs []T, filterFn func(doc T) bson.M, setFn func(doc T) bson.M) (matched, upserted int64, err error)
-
-	// Update’ler
 	UpdateOne(ctx context.Context, filter bson.M, update bson.M, upsert bool) error
 	BulkUpdate(ctx context.Context, filter bson.M, update bson.M, upsert bool) (int64, error)
-
-	// (Opsiyonel ama çok faydalı) Güncellenmiş dokümanı döndür
 	FindOneAndUpdate(ctx context.Context, filter bson.M, update bson.M, returnAfter bool, upsert bool) (*T, error)
-
-	// Delete’ler
 	DeleteOne(ctx context.Context, filter bson.M) error
 	DeleteMany(ctx context.Context, filter bson.M) (int64, error)
-
-	// Soft-delete (back-office için ideal)
 	DeleteOneSoft(ctx context.Context, filter bson.M, deletedBy string) error
 	DeleteManySoft(ctx context.Context, filter bson.M, deletedBy string) (int64, error)
 }
 
+// Aggregator interface for complex_query operations
 type Aggregator[T any] interface {
 	Aggregate(ctx context.Context, builder *AggregateBuilder) ([]bson.M, error)
 	AggregateWithOptions(ctx context.Context, builder *AggregateBuilder, opts *options.AggregateOptions) ([]bson.M, error)
 }
 
+// Repository combines all interfaces
 type Repository[T any] interface {
 	Reader[T]
 	Writer[T]
 	Aggregator[T]
 }
 
-//-------------Interface Description Finished--------
-
-// Query: Tekli sorgu
+// Query represents a single query condition
 type Query struct {
 	Field string
 	Op    OpType
@@ -107,7 +91,7 @@ func (q Query) ToBSON() bson.M {
 	return bson.M{q.Field: bson.M{string(q.Op): q.Value}}
 }
 
-// QueryBuilder: Zincirleme filtre inşa aracı
+// QueryBuilder builds complex queries
 type QueryBuilder struct {
 	conditions []bson.M
 }
@@ -116,17 +100,9 @@ func NewQueryBuilder() *QueryBuilder {
 	return &QueryBuilder{conditions: []bson.M{}}
 }
 
-/*func (qb *QueryBuilder) Where(field string, op OpType, value interface{}) *QueryBuilder {
-	qb.conditions = append(qb.conditions, Query{field, op, value}.ToBSON())
-	return qb
-}*/
-
-// Biden fazla where pes pese kullanilabilsin diye Merge ediliyor..
 func (qb *QueryBuilder) Where(field string, op OpType, value interface{}) *QueryBuilder {
-	// Var olan condition’ı bul & merge et
 	for i, c := range qb.conditions {
 		if cond, ok := c[field]; ok {
-			// cond genelde bson.M
 			m := cond.(bson.M)
 			m[string(op)] = value
 			qb.conditions[i] = bson.M{field: m}
@@ -137,14 +113,11 @@ func (qb *QueryBuilder) Where(field string, op OpType, value interface{}) *Query
 	return qb
 }
 
-// WhereIn: Belirtilen alanda $in operatörü ile çoklu değer sorgusu
-// WhereIn: $in operatörü, tek argüman slice/bson.A ise flatten eder
 func (qb *QueryBuilder) WhereIn(field string, values ...interface{}) *QueryBuilder {
-	// flatten
 	if len(values) == 1 {
 		switch v := values[0].(type) {
 		case bson.A:
-			values = []interface{}(v)
+			values = v
 		case []interface{}:
 			values = v
 		case []primitive.ObjectID:
@@ -156,7 +129,6 @@ func (qb *QueryBuilder) WhereIn(field string, values ...interface{}) *QueryBuild
 		}
 	}
 
-	// mevcut condition varsa merge et
 	for i, c := range qb.conditions {
 		if cond, ok := c[field]; ok {
 			m := cond.(bson.M)
@@ -200,41 +172,22 @@ func (qb *QueryBuilder) Build() bson.M {
 	return bson.M{"$and": qb.conditions}
 }
 
-// ComplexQuery: And, Or, Not kombinasyonları için
-func AndQuery(queries ...bson.M) bson.M {
-	return bson.M{"$and": queries}
-}
-
-func OrQuery(queries ...bson.M) bson.M {
-	return bson.M{"$or": queries}
-}
-
-func NotQuery(query bson.M) bson.M {
-	return bson.M{"$not": query}
-}
-
-// SortOption ve Pagination
-
+// SortOption defines sorting options
 type SortOption struct {
 	Field     string
 	Ascending bool
 }
 
+// Pagination defines pagination options
 type Pagination struct {
 	Limit int64
 	Skip  int64
 }
 
-// MongoRepository - generic repo
+// MongoRepository is a generic MongoDB repository implementation
 type MongoRepository[T any] struct {
 	Collection *mongo.Collection
 }
-
-// InsertOne
-/*func (r *MongoRepository[T]) Insert(ctx context.Context, doc *T) error {
-	_, err := r.Collection.InsertOne(ctx, doc)
-	return err
-}*/
 
 func (r *MongoRepository[T]) Insert(ctx context.Context, doc *T) (interface{}, error) {
 	res, err := r.Collection.InsertOne(ctx, doc)
@@ -244,7 +197,6 @@ func (r *MongoRepository[T]) Insert(ctx context.Context, doc *T) (interface{}, e
 	return res.InsertedID, nil
 }
 
-// InsertOrUpdate: belge varsa replace, yoksa insert (upsert)
 func (r *MongoRepository[T]) InsertOrUpdate(ctx context.Context, filter bson.M, doc *T) (matched, upserted int64, err error) {
 	res, err := r.Collection.ReplaceOne(ctx, filter, doc, options.Replace().SetUpsert(true))
 	if err != nil {
@@ -257,21 +209,19 @@ func (r *MongoRepository[T]) InsertOrUpdate(ctx context.Context, filter bson.M, 
 	return res.MatchedCount, ups, nil
 }
 
-// BulkInsert
 func (r *MongoRepository[T]) BulkInsert(ctx context.Context, docs []T) error {
-	var insertDocs []interface{}
-	for _, d := range docs {
-		insertDocs = append(insertDocs, d)
+	insertDocs := make([]interface{}, len(docs))
+	for i, d := range docs {
+		insertDocs[i] = d
 	}
 	_, err := r.Collection.InsertMany(ctx, insertDocs)
 	return err
 }
 
-// BulkInsert With Inserted IDS
 func (r *MongoRepository[T]) BulkInsertWithIDs(ctx context.Context, docs []T) ([]interface{}, error) {
-	var insertDocs []interface{}
-	for _, d := range docs {
-		insertDocs = append(insertDocs, d)
+	insertDocs := make([]interface{}, len(docs))
+	for i, d := range docs {
+		insertDocs[i] = d
 	}
 
 	res, err := r.Collection.InsertMany(ctx, insertDocs)
@@ -281,8 +231,6 @@ func (r *MongoRepository[T]) BulkInsertWithIDs(ctx context.Context, docs []T) ([
 	return res.InsertedIDs, nil
 }
 
-// BulkInsertOrUpdateSet: docs için toplu upsert ($set semantiği)
-// setFn: her doc için setlenecek alanları üretir
 func (r *MongoRepository[T]) BulkInsertOrUpdateForFields(
 	ctx context.Context,
 	docs []T,
@@ -310,8 +258,6 @@ func (r *MongoRepository[T]) BulkInsertOrUpdateForFields(
 	return res.MatchedCount, int64(len(res.UpsertedIDs)), nil
 }
 
-// BulkInsertOrUpdate: docs için toplu upsert (Replace semantiği)
-// filterFn: her doc için upsert filtresini üretir (ör. {"_id": doc.ID})
 func (r *MongoRepository[T]) BulkInsertOrUpdate(
 	ctx context.Context,
 	docs []T,
@@ -324,9 +270,23 @@ func (r *MongoRepository[T]) BulkInsertOrUpdate(
 
 	models := make([]mongo.WriteModel, 0, len(docs))
 	for _, d := range docs {
+		// Convert document to BSON and remove _id field to avoid immutable field error
+		docBSON, err := bson.Marshal(d)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var docMap bson.M
+		if err := bson.Unmarshal(docBSON, &docMap); err != nil {
+			return 0, 0, err
+		}
+
+		// Remove _id field to avoid immutable field error during replacement
+		delete(docMap, "_id")
+
 		m := mongo.NewReplaceOneModel().
 			SetFilter(filterFn(d)).
-			SetReplacement(d).
+			SetReplacement(docMap).
 			SetUpsert(true)
 		models = append(models, m)
 	}
@@ -338,51 +298,14 @@ func (r *MongoRepository[T]) BulkInsertOrUpdate(
 	return res.MatchedCount, int64(len(res.UpsertedIDs)), nil
 }
 
-// FindMany
-/*func (r *MongoRepository[T]) Find(ctx context.Context, filter bson.M, sort *SortOption, pagination *Pagination) ([]T, error) {
-	findOptions := options.Find()
-	if sort != nil {
-		direction := 1
-		if !sort.Ascending {
-			direction = -1
-		}
-		findOptions.SetSort(bson.D{{Key: sort.Field, Value: direction}})
-	}
-	if pagination != nil {
-		findOptions.SetLimit(pagination.Limit)
-		findOptions.SetSkip(pagination.Skip)
-	}
-
-	cursor, err := r.Collection.Find(ctx, filter, findOptions)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var results []T
-	for cursor.Next(ctx) {
-		var item T
-		if err := cursor.Decode(&item); err != nil {
-			return nil, err
-		}
-		results = append(results, item)
-	}
-	return results, nil
-}*/
-
-// FindMany
-// Find: opsiyonel IsDeleted predicate (variadic ...*bool)
-// isDeleted verilirse ve nil değilse filtreye IsDeleted koşulu eklenir.
-// Default Sadece aktif (silinmemiş) kayıtlar getirilir.
 func (r *MongoRepository[T]) Find(
 	ctx context.Context,
 	filter bson.M,
 	sort *SortOption,
 	pagination *Pagination,
-	isDeleted ...*bool, // ✅ opsiyonel predicate
+	isDeleted ...*bool,
 ) ([]T, error) {
 
-	// Opsiyonel IsDeleted koşulu
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
 		filter["is_deleted"] = *isDeleted[0]
 	} else {
@@ -406,7 +329,12 @@ func (r *MongoRepository[T]) Find(
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer func(cursor *mongo.Cursor, ctx context.Context) {
+		err = cursor.Close(ctx)
+		if err != nil {
+
+		}
+	}(cursor, ctx)
 
 	var results []T
 	for cursor.Next(ctx) {
@@ -417,7 +345,6 @@ func (r *MongoRepository[T]) Find(
 		results = append(results, item)
 	}
 
-	// 🔎 döngü sonrası cursor hatasını kontrol et
 	if err := cursor.Err(); err != nil {
 		return nil, err
 	}
@@ -425,33 +352,36 @@ func (r *MongoRepository[T]) Find(
 	return results, nil
 }
 
-// FindOne
-/*func (r *MongoRepository[T]) FindOne(ctx context.Context, filter bson.M) (*T, error) {
-	result := r.Collection.FindOne(ctx, filter)
-	if result.Err() != nil {
-		return nil, result.Err()
-	}
-	var item T
-	if err := result.Decode(&item); err != nil {
-		return nil, err
-	}
-	return &item, nil
-}*/
-// FindOne With Optional IsDeleted Parameter
-// Default Sadece aktif (silinmemiş) kayıdi getirir.
 func (r *MongoRepository[T]) FindOne(
 	ctx context.Context,
 	filter bson.M,
-	isDeleted ...*bool, // ✅ opsiyonel predicate
+	isDeleted ...*bool,
 ) (*T, error) {
-	// Eğer parametre verilmişse ve nil değilse filtreye uygula
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["is_deleted"] = *isDeleted[0]
-	} else {
-		filter["is_deleted"] = false
+	// Create a copy of the filter to avoid modifying the original
+	finalFilter := make(bson.M)
+	for k, v := range filter {
+		finalFilter[k] = v
 	}
 
-	result := r.Collection.FindOne(ctx, filter)
+	// Add is_deleted condition
+	if len(isDeleted) > 0 && isDeleted[0] != nil {
+		finalFilter["is_deleted"] = *isDeleted[0]
+	} else {
+		// Handle documents that don't have is_deleted field (treat as not deleted)
+		if _, hasOr := finalFilter["$or"]; hasOr {
+			// If $or already exists, we can't safely add our condition
+			// Fall back to simple is_deleted: false (this might miss some documents)
+			finalFilter["is_deleted"] = false
+		} else {
+			// Use $or to find documents where is_deleted is false OR doesn't exist
+			finalFilter["$or"] = []bson.M{
+				{"is_deleted": false},
+				{"is_deleted": bson.M{"$exists": false}},
+			}
+		}
+	}
+
+	result := r.Collection.FindOne(ctx, finalFilter)
 	if result.Err() != nil {
 		return nil, result.Err()
 	}
@@ -463,7 +393,6 @@ func (r *MongoRepository[T]) FindOne(
 	return &item, nil
 }
 
-// UpdateOne veya Upsert
 func (r *MongoRepository[T]) UpdateOne(ctx context.Context, filter bson.M, update bson.M, upsert bool) error {
 	opts := options.Update().SetUpsert(upsert)
 	res, err := r.Collection.UpdateOne(ctx, filter, bson.M{"$set": update}, opts)
@@ -476,7 +405,6 @@ func (r *MongoRepository[T]) UpdateOne(ctx context.Context, filter bson.M, updat
 	return nil
 }
 
-// BulkUpdate - çoklu belge güncelleme
 func (r *MongoRepository[T]) BulkUpdate(ctx context.Context, filter bson.M, update bson.M, upsert bool) (int64, error) {
 	opts := options.Update().SetUpsert(upsert)
 	res, err := r.Collection.UpdateMany(ctx, filter, bson.M{"$set": update}, opts)
@@ -486,7 +414,6 @@ func (r *MongoRepository[T]) BulkUpdate(ctx context.Context, filter bson.M, upda
 	return res.ModifiedCount, nil
 }
 
-// DeleteOne
 func (r *MongoRepository[T]) DeleteOne(ctx context.Context, filter bson.M) error {
 	res, err := r.Collection.DeleteOne(ctx, filter)
 	if err != nil {
@@ -498,7 +425,6 @@ func (r *MongoRepository[T]) DeleteOne(ctx context.Context, filter bson.M) error
 	return nil
 }
 
-// DeleteMany - çoklu document silme
 func (r *MongoRepository[T]) DeleteMany(ctx context.Context, filter bson.M) (int64, error) {
 	res, err := r.Collection.DeleteMany(ctx, filter)
 	if err != nil {
@@ -514,7 +440,6 @@ func (r *MongoRepository[T]) DeleteOneSoft(ctx context.Context, filter bson.M, d
 	if filter == nil {
 		filter = bson.M{}
 	}
-	// Don't target already-deleted docs unless caller explicitly overrides
 	if _, ok := filter["is_deleted"]; !ok {
 		filter["is_deleted"] = bson.M{"$ne": true}
 	}
@@ -522,7 +447,7 @@ func (r *MongoRepository[T]) DeleteOneSoft(ctx context.Context, filter bson.M, d
 	now := time.Now().UTC()
 	update := bson.M{"$set": bson.M{
 		"is_deleted": true,
-		"deleted_at": &now, // pointer field in your model
+		"deleted_at": &now,
 		"deleted_by": deletedBy,
 	}}
 
@@ -534,7 +459,7 @@ func (r *MongoRepository[T]) DeleteOneSoft(ctx context.Context, filter bson.M, d
 		return errors.New("no documents matched")
 	}
 	if res.ModifiedCount == 0 {
-		return errors.New("document matched but not modified (maybe already soft-deleted)")
+		return errors.New("document matched but not modified")
 	}
 	return nil
 }
@@ -562,34 +487,10 @@ func (r *MongoRepository[T]) DeleteManySoft(ctx context.Context, filter bson.M, 
 		return 0, errors.New("no documents matched")
 	}
 	if res.ModifiedCount == 0 {
-		return 0, errors.New("documents matched but not modified (maybe already soft-deleted)")
+		return 0, errors.New("documents matched but not modified")
 	}
 	return res.ModifiedCount, nil
 }
-
-// filter := NumericIDsFilter(42, 43, 44)
-func NumericIDsFilter(ids ...int64) bson.M {
-	in := make([]any, 0, len(ids)*2)
-	for _, id := range ids {
-		in = append(in, int32(id), int64(id)) // match both NumberInt and NumberLong
-	}
-	return bson.M{"_id": bson.M{"$in": in}}
-}
-
-// Aggregate
-/*func (r *MongoRepository[T]) Aggregate(ctx context.Context, pipeline mongo.Pipeline) ([]bson.M, error) {
-	cursor, err := r.Collection.Aggregate(ctx, pipeline)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var results []bson.M
-	if err := cursor.All(ctx, &results); err != nil {
-		return nil, err
-	}
-	return results, nil
-}*/
 
 func (r *MongoRepository[T]) Aggregate(ctx context.Context, builder *AggregateBuilder) ([]bson.M, error) {
 	pipeline := builder.Build()
@@ -598,7 +499,13 @@ func (r *MongoRepository[T]) Aggregate(ctx context.Context, builder *AggregateBu
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+
+	defer func(cursor *mongo.Cursor, ctx context.Context) {
+		err = cursor.Close(ctx)
+		if err != nil {
+
+		}
+	}(cursor, ctx)
 
 	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
@@ -607,25 +514,7 @@ func (r *MongoRepository[T]) Aggregate(ctx context.Context, builder *AggregateBu
 	return results, nil
 }
 
-// Helper: String to ObjectID
-func ToObjectID(idStr string) primitive.ObjectID {
-	id, err := primitive.ObjectIDFromHex(idStr)
-	if err != nil {
-		log.Fatal("Invalid ObjectID:", err)
-	}
-	return id
-}
-
-// Helper: String to Time (RFC3339)
-func ToTimeRFC3339(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		log.Fatal("Invalid date format:", err)
-	}
-	return t
-}
-
-// Aggregate Query Chain
+// AggregateBuilder builds complex_query pipelines
 type AggregateBuilder struct {
 	pipeline mongo.Pipeline
 }
@@ -634,13 +523,11 @@ func NewAggregateBuilder() *AggregateBuilder {
 	return &AggregateBuilder{pipeline: mongo.Pipeline{}}
 }
 
-// $match
 func (ab *AggregateBuilder) Match(filter bson.M) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$match", Value: filter}})
 	return ab
 }
 
-// $group
 func (ab *AggregateBuilder) Group(id interface{}, fields bson.M) *AggregateBuilder {
 	group := bson.D{{Key: "$group", Value: bson.M{"_id": id}}}
 	for k, v := range fields {
@@ -650,7 +537,6 @@ func (ab *AggregateBuilder) Group(id interface{}, fields bson.M) *AggregateBuild
 	return ab
 }
 
-// $sort
 func (ab *AggregateBuilder) Sort(field string, direction int) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$sort", Value: bson.D{{Key: field, Value: direction}}}})
 	return ab
@@ -660,6 +546,7 @@ type SortField struct {
 	Field string
 	Asc   bool
 }
+
 type SortOptions struct{ Fields []SortField }
 
 func Sorts(so *SortOptions) bson.D {
@@ -677,31 +564,26 @@ func Sorts(so *SortOptions) bson.D {
 	return d
 }
 
-// $project
 func (ab *AggregateBuilder) Project(fields bson.M) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$project", Value: fields}})
 	return ab
 }
 
-// $limit
 func (ab *AggregateBuilder) Limit(n int64) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$limit", Value: n}})
 	return ab
 }
 
-// $skip
 func (ab *AggregateBuilder) Skip(n int64) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$skip", Value: n}})
 	return ab
 }
 
-// $unwind
 func (ab *AggregateBuilder) Unwind(field string) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$unwind", Value: "$" + field}})
 	return ab
 }
 
-// $lookup
 func (ab *AggregateBuilder) Lookup(from, localField, foreignField, as string) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$lookup", Value: bson.M{
 		"from":         from,
@@ -712,20 +594,15 @@ func (ab *AggregateBuilder) Lookup(from, localField, foreignField, as string) *A
 	return ab
 }
 
-// $count
 func (ab *AggregateBuilder) Count(alias string) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$count", Value: alias}})
 	return ab
 }
 
-// Build
 func (ab *AggregateBuilder) Build() mongo.Pipeline {
 	return ab.pipeline
 }
 
-// === AggregateBuilder Helpers Multi Relation ===
-
-// $unwind (preserveNullAndEmptyArrays: true)
 func (ab *AggregateBuilder) UnwindPreserveNull(field string) *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$unwind", Value: bson.M{
 		"path": "$" + field, "preserveNullAndEmptyArrays": true,
@@ -733,7 +610,6 @@ func (ab *AggregateBuilder) UnwindPreserveNull(field string) *AggregateBuilder {
 	return ab
 }
 
-// $project: verilen alanları 1 yap (bsonsuz kısa yazım)
 func (ab *AggregateBuilder) ProjectKeep(fields ...string) *AggregateBuilder {
 	if len(fields) == 0 {
 		return ab
@@ -746,12 +622,10 @@ func (ab *AggregateBuilder) ProjectKeep(fields ...string) *AggregateBuilder {
 	return ab
 }
 
-// $addFields: alias = expr çiftlerini tek seferde ekle
-// Örn: ProjectAliases("UserName","$user.UserName","Email","$user.Email")
 func (ab *AggregateBuilder) ProjectAliases(pairs ...string) *AggregateBuilder {
 	if len(pairs)%2 != 0 {
 		return ab
-	} // güvenlik: çift olmalı
+	}
 	m := bson.M{}
 	for i := 0; i < len(pairs); i += 2 {
 		m[pairs[i]] = pairs[i+1]
@@ -760,13 +634,11 @@ func (ab *AggregateBuilder) ProjectAliases(pairs ...string) *AggregateBuilder {
 	return ab
 }
 
-// _id'yi gizlemek için kısa yol
 func (ab *AggregateBuilder) ExcludeID() *AggregateBuilder {
 	ab.pipeline = append(ab.pipeline, bson.D{{Key: "$project", Value: bson.M{"_id": 0}}})
 	return ab
 }
 
-// === Aggregate with options (opsiyonel) ===
 func (r *MongoRepository[T]) AggregateWithOptions(
 	ctx context.Context,
 	builder *AggregateBuilder,
@@ -776,7 +648,14 @@ func (r *MongoRepository[T]) AggregateWithOptions(
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+
+	defer func(cursor *mongo.Cursor, ctx context.Context) {
+		err = cursor.Close(ctx)
+		if err != nil {
+
+		}
+	}(cursor, ctx)
+
 	var results []bson.M
 	if err := cursor.All(ctx, &results); err != nil {
 		return nil, err
@@ -793,7 +672,6 @@ func (r *MongoRepository[T]) Count(ctx context.Context, filter bson.M, isDeleted
 	return r.Collection.CountDocuments(ctx, filter)
 }
 
-// page: 1-based (1,2,3,...)  | pageSize: >0
 func MakePagination(page, pageSize int64) *Pagination {
 	if page < 1 {
 		page = 1
@@ -805,19 +683,42 @@ func MakePagination(page, pageSize int64) *Pagination {
 	return &Pagination{Limit: pageSize, Skip: skip}
 }
 
-// ortak helper (mutates)
 func ensureActiveFilter(filter bson.M, isDeleted ...*bool) {
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
 		filter["is_deleted"] = *isDeleted[0]
 		return
 	}
 	if _, ok := filter["is_deleted"]; !ok {
-		filter["is_deleted"] = false
+		// Handle documents that don't have is_deleted field (treat as not deleted)
+		// Use $or to find documents where is_deleted is false OR doesn't exist
+		if existingOr, hasOr := filter["$or"]; hasOr {
+			// If $or already exists, we need to combine it with our is_deleted condition
+			orConditions := existingOr.([]bson.M)
+			// Add is_deleted condition to each existing $or condition
+			for i, condition := range orConditions {
+				orConditions[i] = bson.M{
+					"$and": []bson.M{
+						condition,
+						{
+							"$or": []bson.M{
+								{"is_deleted": false},
+								{"is_deleted": bson.M{"$exists": false}},
+							},
+						},
+					},
+				}
+			}
+			filter["$or"] = orConditions
+		} else {
+			// No existing $or, create a simple one for is_deleted
+			filter["$or"] = []bson.M{
+				{"is_deleted": false},
+				{"is_deleted": bson.M{"$exists": false}},
+			}
+		}
 	}
 }
 
-// FindWithCount: aynı filtreyle toplam sayıyı ve sayfa verisini döndürür
-// Default IsDeleted = false
 func (r *MongoRepository[T]) FindWithCount(
 	ctx context.Context,
 	filter bson.M,
@@ -826,16 +727,13 @@ func (r *MongoRepository[T]) FindWithCount(
 	isDeleted ...*bool,
 ) ([]T, int64, error) {
 
-	// 👉 Dışarıdaki filter’ı klonlamadan, aynı referans üzerinde çalış
 	ensureActiveFilter(filter, isDeleted...)
 
-	// 1) Toplam
 	total, err := r.Collection.CountDocuments(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// 2) Sayfa verisi (ister r.Find ile, ister direkt Collection.Find ile)
 	items, err := r.Find(ctx, filter, sort, pagination, isDeleted...)
 	if err != nil {
 		return nil, 0, err

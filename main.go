@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/darkcoretech/mongo-repository/mongo"
+	mongokit "github.com/darkcoretech/mongo-repository/mongo"
 )
 
 // Simple test to verify the package works correctly
@@ -14,15 +14,15 @@ func main() {
 	defer cancel()
 
 	// Initialize MongoDB client
-	client := mongo.InitMongoClient("mongodb://localhost:27017")
+	client := mongokit.InitMongoClient("mongodb://localhost:27017")
 
 	// Test basic repository functionality
 	testCollection := client.Database("sample-db").Collection("sample_collection")
-	_ = mongo.MongoRepository[mongo.SampleModel]{Collection: testCollection}
+	_ = mongokit.MongoRepository[mongokit.SampleModel]{Collection: testCollection}
 
 	// Test query builder
-	filter := mongo.NewQueryBuilder().
-		Where("name", mongo.OpTypes.Eq, "test").
+	filter := mongokit.NewQueryBuilder().
+		Where("name", mongokit.OpTypes.Eq, "test").
 		Build()
 
 	fmt.Println("Query filter:", filter)
@@ -30,25 +30,25 @@ func main() {
 	// Use ctx to avoid unused variable warning
 	_ = ctx
 
-	// Test aggregation builder
-	aggBuilder := mongo.NewAggregateBuilder().
+	// Test complex_query builder
+	aggBuilder := mongokit.NewAggregateBuilder().
 		Match(filter).
 		Limit(10)
 
 	fmt.Println("Aggregation pipeline:", aggBuilder.Build())
 
 	// Test pagination
-	pagination := mongo.MakePagination(1, 10)
+	pagination := mongokit.MakePagination(1, 10)
 	fmt.Printf("Pagination: Limit=%d, Skip=%d\n", pagination.Limit, pagination.Skip)
 
 	// Test sort options
-	sortOpts := &mongo.SortOptions{
-		Fields: []mongo.SortField{
+	sortOpts := &mongokit.SortOptions{
+		Fields: []mongokit.SortField{
 			{Field: "name", Asc: true},
 			{Field: "price", Asc: false},
 		},
 	}
-	fmt.Println("Sort options:", mongo.Sorts(sortOpts))
+	fmt.Println("Sort options:", mongokit.Sorts(sortOpts))
 
 	fmt.Println("✅ MongoDB Repository package is working correctly!")
 	fmt.Println("📚 Check the examples/ directory for comprehensive usage examples.")
