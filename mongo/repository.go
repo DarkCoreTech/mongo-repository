@@ -3,6 +3,7 @@ package mongokit
 import (
 	"context"
 	"errors"
+	"maps"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -664,11 +665,8 @@ func (r *MongoRepository[T]) AggregateWithOptions(
 }
 
 func (r *MongoRepository[T]) Count(ctx context.Context, filter bson.M, isDeleted ...*bool) (int64, error) {
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["is_deleted"] = *isDeleted[0]
-	} else {
-		filter["is_deleted"] = false
-	}
+	f := cloneFilter(filter)
+	applyDeleteFilter(f, "is_deleted", isDeleted...)
 	return r.Collection.CountDocuments(ctx, filter)
 }
 
@@ -740,4 +738,27 @@ func (r *MongoRepository[T]) FindWithCount(
 	}
 
 	return items, total, nil
+}
+
+func applyDeleteFilter(filter bson.M, fieldName string, isDeleted ...*bool) {
+	if filter == nil {
+		return
+	}
+	if _, ok := filter[fieldName]; ok {
+		return
+	}
+	if len(isDeleted) == 0 {
+		return
+	}
+	if isDeleted[0] == nil {
+		return
+	}
+	filter[fieldName] = *isDeleted[0]
+}
+
+func cloneFilter(src bson.M) bson.M {
+	if src == nil {
+		return bson.M{}
+	}
+	return maps.Clone(src)
 }
