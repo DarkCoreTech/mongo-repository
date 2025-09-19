@@ -270,9 +270,23 @@ func (r *MongoRepository[T]) BulkInsertOrUpdate(
 
 	models := make([]mongo.WriteModel, 0, len(docs))
 	for _, d := range docs {
+		// Convert document to BSON and remove _id field to avoid immutable field error
+		docBSON, err := bson.Marshal(d)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var docMap bson.M
+		if err := bson.Unmarshal(docBSON, &docMap); err != nil {
+			return 0, 0, err
+		}
+
+		// Remove _id field to avoid immutable field error during replacement
+		delete(docMap, "_id")
+
 		m := mongo.NewReplaceOneModel().
 			SetFilter(filterFn(d)).
-			SetReplacement(d).
+			SetReplacement(docMap).
 			SetUpsert(true)
 		models = append(models, m)
 	}
@@ -343,13 +357,31 @@ func (r *MongoRepository[T]) FindOne(
 	filter bson.M,
 	isDeleted ...*bool,
 ) (*T, error) {
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["is_deleted"] = *isDeleted[0]
-	} else {
-		filter["is_deleted"] = false
+	// Create a copy of the filter to avoid modifying the original
+	finalFilter := make(bson.M)
+	for k, v := range filter {
+		finalFilter[k] = v
 	}
 
-	result := r.Collection.FindOne(ctx, filter)
+	// Add is_deleted condition
+	if len(isDeleted) > 0 && isDeleted[0] != nil {
+		finalFilter["is_deleted"] = *isDeleted[0]
+	} else {
+		// Handle documents that don't have is_deleted field (treat as not deleted)
+		if _, hasOr := finalFilter["$or"]; hasOr {
+			// If $or already exists, we can't safely add our condition
+			// Fall back to simple is_deleted: false (this might miss some documents)
+			finalFilter["is_deleted"] = false
+		} else {
+			// Use $or to find documents where is_deleted is false OR doesn't exist
+			finalFilter["$or"] = []bson.M{
+				{"is_deleted": false},
+				{"is_deleted": bson.M{"$exists": false}},
+			}
+		}
+	}
+
+	result := r.Collection.FindOne(ctx, finalFilter)
 	if result.Err() != nil {
 		return nil, result.Err()
 	}
@@ -657,7 +689,33 @@ func ensureActiveFilter(filter bson.M, isDeleted ...*bool) {
 		return
 	}
 	if _, ok := filter["is_deleted"]; !ok {
-		filter["is_deleted"] = false
+		// Handle documents that don't have is_deleted field (treat as not deleted)
+		// Use $or to find documents where is_deleted is false OR doesn't exist
+		if existingOr, hasOr := filter["$or"]; hasOr {
+			// If $or already exists, we need to combine it with our is_deleted condition
+			orConditions := existingOr.([]bson.M)
+			// Add is_deleted condition to each existing $or condition
+			for i, condition := range orConditions {
+				orConditions[i] = bson.M{
+					"$and": []bson.M{
+						condition,
+						{
+							"$or": []bson.M{
+								{"is_deleted": false},
+								{"is_deleted": bson.M{"$exists": false}},
+							},
+						},
+					},
+				}
+			}
+			filter["$or"] = orConditions
+		} else {
+			// No existing $or, create a simple one for is_deleted
+			filter["$or"] = []bson.M{
+				{"is_deleted": false},
+				{"is_deleted": bson.M{"$exists": false}},
+			}
+		}
 	}
 }
 
