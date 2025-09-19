@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	mongokit "github.com/darkcoretech/mongo-repository/internal"
+	mongokit "github.com/darkcoretech/mongo-repository/mongo"
 )
 
 // Simple test to verify the package works correctly
@@ -30,7 +30,7 @@ func main() {
 	// Use ctx to avoid unused variable warning
 	_ = ctx
 
-	// Test aggregation builder
+	// Test complex_query builder
 	aggBuilder := mongokit.NewAggregateBuilder().
 		Match(filter).
 		Limit(10)

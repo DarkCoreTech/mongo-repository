@@ -67,7 +67,7 @@ type Writer[T any] interface {
 	DeleteManySoft(ctx context.Context, filter bson.M, deletedBy string) (int64, error)
 }
 
-// Aggregator interface for aggregation operations
+// Aggregator interface for complex_query operations
 type Aggregator[T any] interface {
 	Aggregate(ctx context.Context, builder *AggregateBuilder) ([]bson.M, error)
 	AggregateWithOptions(ctx context.Context, builder *AggregateBuilder, opts *options.AggregateOptions) ([]bson.M, error)
@@ -482,7 +482,7 @@ func (r *MongoRepository[T]) Aggregate(ctx context.Context, builder *AggregateBu
 	return results, nil
 }
 
-// AggregateBuilder builds aggregation pipelines
+// AggregateBuilder builds complex_query pipelines
 type AggregateBuilder struct {
 	pipeline mongo.Pipeline
 }

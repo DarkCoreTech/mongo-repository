@@ -1,23 +1,29 @@
-package benchmark
+package writer
 
 import (
 	"context"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/darkcoretech/mongo-repository/benchmark"
+	mongokit "github.com/darkcoretech/mongo-repository/mongo"
 )
 
 func Benchmark_Insert(b *testing.B) {
 	ctx := context.Background()
 
-	client, err := SetupBenchmark()
+	db, err := benchmark.SetupBenchmark()
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
+
+	collection := db.Collection(benchmark.TestUsers)
+
 	for i := 0; i < b.N; i++ {
-		testUser := TestUser{
+		testUser := benchmark.TestUser{
 			Email:   fmt.Sprintf("test%d@example.com", i),
 			Name:    "Test User",
 			Status:  true,
@@ -25,7 +31,9 @@ func Benchmark_Insert(b *testing.B) {
 			Updated: time.Now(),
 		}
 
-		_, err = client.Collection(TestUsers).InsertOne(ctx, testUser)
+		repo := &mongokit.MongoRepository[benchmark.TestUser]{Collection: collection}
+
+		_, err = repo.Insert(ctx, &testUser)
 		if err != nil {
 			b.Errorf("Insert failed: %v", err)
 		}
