@@ -310,7 +310,10 @@ func (r *MongoRepository[T]) Find(
 	if len(isDeleted) > 0 && isDeleted[0] != nil {
 		filter["is_deleted"] = *isDeleted[0]
 	} else {
-		filter["is_deleted"] = false
+		filter["$or"] = []bson.M{
+			{"is_deleted": false},
+			{"is_deleted": bson.M{"$exists": false}},
+		}
 	}
 
 	findOptions := options.Find()
