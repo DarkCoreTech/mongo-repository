@@ -306,15 +306,8 @@ func (r *MongoRepository[T]) Find(
 	pagination *Pagination,
 	isDeleted ...*bool,
 ) ([]T, error) {
-
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["is_deleted"] = *isDeleted[0]
-	} else {
-		filter["$or"] = []bson.M{
-			{"is_deleted": false},
-			{"is_deleted": bson.M{"$exists": false}},
-		}
-	}
+	f := cloneFilter(filter)
+	applyDeleteFilter(f, "is_deleted", isDeleted...)
 
 	findOptions := options.Find()
 	if sort != nil {
@@ -361,31 +354,10 @@ func (r *MongoRepository[T]) FindOne(
 	filter bson.M,
 	isDeleted ...*bool,
 ) (*T, error) {
-	// Create a copy of the filter to avoid modifying the original
-	finalFilter := make(bson.M)
-	for k, v := range filter {
-		finalFilter[k] = v
-	}
+	f := cloneFilter(filter)
+	applyDeleteFilter(f, "is_deleted", isDeleted...)
 
-	// Add is_deleted condition
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		finalFilter["is_deleted"] = *isDeleted[0]
-	} else {
-		// Handle documents that don't have is_deleted field (treat as not deleted)
-		if _, hasOr := finalFilter["$or"]; hasOr {
-			// If $or already exists, we can't safely add our condition
-			// Fall back to simple is_deleted: false (this might miss some documents)
-			finalFilter["is_deleted"] = false
-		} else {
-			// Use $or to find documents where is_deleted is false OR doesn't exist
-			finalFilter["$or"] = []bson.M{
-				{"is_deleted": false},
-				{"is_deleted": bson.M{"$exists": false}},
-			}
-		}
-	}
-
-	result := r.Collection.FindOne(ctx, finalFilter)
+	result := r.Collection.FindOne(ctx, f)
 	if result.Err() != nil {
 		return nil, result.Err()
 	}
@@ -727,8 +699,8 @@ func (r *MongoRepository[T]) FindWithCount(
 	pagination *Pagination,
 	isDeleted ...*bool,
 ) ([]T, int64, error) {
-
-	ensureActiveFilter(filter, isDeleted...)
+	f := cloneFilter(filter)
+	applyDeleteFilter(f, "IsDeleted", isDeleted...)
 
 	total, err := r.Collection.CountDocuments(ctx, filter)
 	if err != nil {
