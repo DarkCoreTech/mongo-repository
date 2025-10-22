@@ -322,7 +322,7 @@ func (r *MongoRepository[T]) Find(
 		findOptions.SetSkip(pagination.Skip)
 	}
 
-	cursor, err := r.Collection.Find(ctx, filter, findOptions)
+	cursor, err := r.Collection.Find(ctx, f, findOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +642,7 @@ func (r *MongoRepository[T]) AggregateWithOptions(
 func (r *MongoRepository[T]) Count(ctx context.Context, filter bson.M, isDeleted ...*bool) (int64, error) {
 	f := cloneFilter(filter)
 	applyDeleteFilter(f, "is_deleted", isDeleted...)
-	return r.Collection.CountDocuments(ctx, filter)
+	return r.Collection.CountDocuments(ctx, f)
 }
 
 func MakePagination(page, pageSize int64) *Pagination {
@@ -654,42 +654,6 @@ func MakePagination(page, pageSize int64) *Pagination {
 	}
 	skip := (page - 1) * pageSize
 	return &Pagination{Limit: pageSize, Skip: skip}
-}
-
-func ensureActiveFilter(filter bson.M, isDeleted ...*bool) {
-	if len(isDeleted) > 0 && isDeleted[0] != nil {
-		filter["is_deleted"] = *isDeleted[0]
-		return
-	}
-	if _, ok := filter["is_deleted"]; !ok {
-		// Handle documents that don't have is_deleted field (treat as not deleted)
-		// Use $or to find documents where is_deleted is false OR doesn't exist
-		if existingOr, hasOr := filter["$or"]; hasOr {
-			// If $or already exists, we need to combine it with our is_deleted condition
-			orConditions := existingOr.([]bson.M)
-			// Add is_deleted condition to each existing $or condition
-			for i, condition := range orConditions {
-				orConditions[i] = bson.M{
-					"$and": []bson.M{
-						condition,
-						{
-							"$or": []bson.M{
-								{"is_deleted": false},
-								{"is_deleted": bson.M{"$exists": false}},
-							},
-						},
-					},
-				}
-			}
-			filter["$or"] = orConditions
-		} else {
-			// No existing $or, create a simple one for is_deleted
-			filter["$or"] = []bson.M{
-				{"is_deleted": false},
-				{"is_deleted": bson.M{"$exists": false}},
-			}
-		}
-	}
 }
 
 func (r *MongoRepository[T]) FindWithCount(
