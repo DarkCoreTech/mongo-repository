@@ -664,7 +664,7 @@ func (r *MongoRepository[T]) FindWithCount(
 	isDeleted ...*bool,
 ) ([]T, int64, error) {
 	f := cloneFilter(filter)
-	applyDeleteFilter(f, "IsDeleted", isDeleted...)
+	applyDeleteFilter(f, "is_deleted", isDeleted...)
 
 	total, err := r.Collection.CountDocuments(ctx, filter)
 	if err != nil {
