@@ -49,6 +49,7 @@ type Reader[T any] interface {
 	FindOne(ctx context.Context, filter bson.M, isDeleted ...*bool) (*T, error)
 	FindWithCount(ctx context.Context, filter bson.M, sort *SortOption, pagination *Pagination, isDeleted ...*bool) ([]T, int64, error)
 	Count(ctx context.Context, filter bson.M, isDeleted ...*bool) (int64, error)
+	Distinct(ctx context.Context, field string, filter bson.M) ([]interface{}, error)
 }
 
 // Writer interface for write operations
@@ -677,6 +678,20 @@ func (r *MongoRepository[T]) FindWithCount(
 	}
 
 	return items, total, nil
+}
+
+func (r *MongoRepository[T]) Distinct(
+	ctx context.Context,
+	field string,
+	filter bson.M,
+) ([]interface{}, error) {
+
+	result, err := r.Collection.Distinct(ctx, field, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func applyDeleteFilter(filter bson.M, fieldName string, isDeleted ...*bool) {
