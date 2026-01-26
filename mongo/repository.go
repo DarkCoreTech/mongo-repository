@@ -73,6 +73,7 @@ type Writer[T any] interface {
 type Aggregator[T any] interface {
 	Aggregate(ctx context.Context, builder *AggregateBuilder) ([]bson.M, error)
 	AggregateWithOptions(ctx context.Context, builder *AggregateBuilder, opts *options.AggregateOptions) ([]bson.M, error)
+	AggregateRaw(ctx context.Context, pipeline mongo.Pipeline) ([]bson.M, error)
 }
 
 // Repository combines all interfaces
@@ -692,6 +693,25 @@ func (r *MongoRepository[T]) Distinct(
 	}
 
 	return result, nil
+}
+
+func (r *MongoRepository[T]) AggregateRaw(
+	ctx context.Context,
+	pipeline mongo.Pipeline,
+) ([]bson.M, error) {
+
+	cursor, err := r.Collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }
 
 func applyDeleteFilter(filter bson.M, fieldName string, isDeleted ...*bool) {
