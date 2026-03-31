@@ -668,12 +668,12 @@ func (r *MongoRepository[T]) FindWithCount(
 	f := cloneFilter(filter)
 	applyDeleteFilter(f, "is_deleted", isDeleted...)
 
-	total, err := r.Collection.CountDocuments(ctx, filter)
+	total, err := r.Collection.CountDocuments(ctx, f)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	items, err := r.Find(ctx, filter, sort, pagination, isDeleted...)
+	items, err := r.Find(ctx, f, sort, pagination, isDeleted...)
 	if err != nil {
 		return nil, 0, err
 	}
